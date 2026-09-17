@@ -1,1 +1,49 @@
 venv/
+
+# VS Code
+.vscode/
+
+#Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+#Notebooks
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+
+#Logs
+logs/
+*.log
+
+# Models
+models/*.pkl
+models/*.joblib
+
+# MLflow
+mlruns/
+
+# Monitoring Outputs
+monitoring/*.json
+monitoring/*.html
+
+# Docker
+docker-data/
+
+# AWS Credentials
+.aws/
+
+# Feast
+feature_repo/data/
+feature_repo/registry.db
+
+# SQLite
+*.db
+
+# DVC
+.dvc/cache/
+.dvc/tmp/
+
+
