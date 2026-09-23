@@ -14,6 +14,11 @@ __pycache__/
 # Environment variables
 .env
 
+#Data
+data/raw/*.csv
+data/raw/*.json
+
+
 #Logs
 logs/
 *.log
@@ -46,5 +51,4 @@ feature_repo/registry.db
 .dvc/cache/
 .dvc/tmp/
 src/test.py
-
 
