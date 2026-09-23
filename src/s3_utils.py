@@ -18,15 +18,15 @@ def get_s3_client():
     )
 
 
-def upload_file_to_s3(
-    local_file_path,
+def upload_file(
+    file_path,
     s3_key
 ):
 
     s3 = get_s3_client()
 
     s3.upload_file(
-        local_file_path,
+        file_path,
         S3_BUCKET_NAME,
         s3_key
     )
