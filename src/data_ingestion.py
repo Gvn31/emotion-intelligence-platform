@@ -7,12 +7,15 @@ and creates a CSV dataset.
 """
 
 import json
+import os
 import time
 import requests
 import pandas as pd
 from datetime import datetime
-
+from s3_utils import upload_file
+from to_db import insert_data
 from dotenv import load_dotenv
+
 
 # Load environment variables first
 load_dotenv()
@@ -265,8 +268,18 @@ if __name__ == "__main__":
         )
 
         json_path = save_json(
-                all_articles
+            all_articles
         )
+        upload_file(
+            file_path=str(json_path),
+            s3_key=f"raw/{json_path.name}"
+        )
+
+        logger.info(
+            f"Uploaded JSON to S3: raw/{json_path.name}"
+        )
+        
+        
 
         df = articles_to_dataframe(
             all_articles
@@ -306,6 +319,25 @@ if __name__ == "__main__":
         )
 
         csv_path = save_csv(df)
+
+        upload_file(
+            file_path=str(csv_path),
+            s3_key=f"raw/{csv_path.name}"
+        )
+
+        logger.info(
+            f"Uploaded CSV to S3: raw/{csv_path.name}"
+        )
+        
+        # Insert data into PostgreSQL
+        insert_data(df)
+
+        logger.info(
+            f"Inserted {len(df)} records into PostgreSQL"
+        )
+        print(
+            f"Inserted {len(df)} records into PostgreSQL"
+        )
 
         print(
             f"\nJSON Saved : {json_path}"
