@@ -45,5 +45,6 @@ feature_repo/registry.db
 # DVC
 .dvc/cache/
 .dvc/tmp/
+src/test.py
 
 
