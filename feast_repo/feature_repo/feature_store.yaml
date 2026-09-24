@@ -1,0 +1,20 @@
+project: emotion_intelligence
+
+registry: data/registry.db
+
+provider: local
+
+offline_store:
+  type: postgres
+  host: emotion-intelligence-db.ctwo4gqo67ff.ap-south-1.rds.amazonaws.com
+  port: 5432
+  database: postgres
+  db_schema: public
+  user: postgres
+  password: Jikku2201
+
+online_store:
+  type: sqlite
+  path: data/online_store.db
+
+entity_key_serialization_version: 2
