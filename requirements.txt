@@ -17,6 +17,7 @@ sentencepiece
 
 mlflow==2.22.1
 dvc
+dvc-s3
 feast==0.40.1
 evidently==0.7.14
 
@@ -36,6 +37,9 @@ boto3
 sqlalchemy
 psycopg2-binary
 psycopg2
+psycopg
+psycopg-binary
+psycopg-pool
 
 #Config
 pyyaml
