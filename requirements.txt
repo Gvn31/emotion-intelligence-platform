@@ -1,47 +1,50 @@
-numpy
-pandas
+# Core
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.15.3
 matplotlib
-scikit-learn
-xgboost
+
+# ML
+scikit-learn==1.7.2
+xgboost==3.0.4
 joblib
 
-#NLP
+
+# NLP
 nltk
 spacy
 transformers
-torch
+# torch
+# torchvision
+# torchaudio
 datasets
 sentencepiece
+accelerate
 
-#MLOps
-
+# MLOps
 mlflow==2.22.1
-dvc
-dvc-s3
+dvc[s3]
 feast==0.40.1
 evidently==0.7.14
 
-#Backend
+# Backend
 fastapi
 uvicorn
 requests
 
-#Monitoring
+# Monitoring
 prometheus-client
 prometheus-fastapi-instrumentator
 
-#AWS
+# AWS
 boto3
 
-#Database
+# Database
 sqlalchemy
-psycopg2-binary
-psycopg2
-psycopg
-psycopg-binary
+psycopg[binary]
 psycopg-pool
 
-#Config
+# Config
 pyyaml
 python-dotenv
 
