@@ -52,3 +52,11 @@ feature_repo/registry.db
 .dvc/tmp/
 src/test.py
 
+# ML / Hugging Face training outputs
+models/checkpoints/
+models/emotion_model/
+models/*.pkl
+
+# MLflow
+mlruns/
+
