@@ -77,39 +77,65 @@ def create_features(df):
 
     try:
 
-        # Number of characters
+        df["clean_text"] = (
+            df["clean_text"]
+            .fillna("")
+            .astype(str)
+        )
+
+        # Character count
+
         df["text_length"] = (
             df["clean_text"]
-            .astype(str)
             .apply(len)
         )
 
-        # Number of words
+        # Word count
+
         df["word_count"] = (
             df["clean_text"]
-            .astype(str)
             .apply(
                 lambda x: len(x.split())
             )
         )
 
-        # Average word length
-        df["avg_word_length"] = (
+        # Unique word count
+
+        df["unique_word_count"] = (
             df["clean_text"]
-            .astype(str)
             .apply(
-                lambda x:
-                sum(
-                    len(word)
-                    for word in x.split()
-                )
-                /
-                max(
-                    len(x.split()),
-                    1
+                lambda x: len(
+                    set(x.split())
                 )
             )
         )
+
+        # Average word length
+
+        df["avg_word_length"] = (
+            df["clean_text"]
+            .apply(
+                lambda x:
+                (
+                    sum(
+                        len(word)
+                        for word in x.split()
+                    )
+                    /
+                    max(
+                        len(x.split()),
+                        1
+                    )
+                )
+            )
+        )
+
+        # Placeholder values
+        # Emotion inference phase will update these later
+
+        df["sentiment_score"] = 0.0
+
+        df["emotion_label"] = "unknown"
 
         logger.info(
             "Feature engineering completed"
@@ -163,11 +189,14 @@ def save_features(df):
             clean_text,
             text_length,
             word_count,
-            avg_word_length
+            unique_word_count,
+            avg_word_length,
+            sentiment_score,
+            emotion_label
         )
         VALUES
         (
-            %s,%s,%s,%s,%s
+            %s,%s,%s,%s,%s,%s,%s,%s
         );
         """
 
@@ -178,7 +207,10 @@ def save_features(df):
                 row["clean_text"],
                 int(row["text_length"]),
                 int(row["word_count"]),
-                float(row["avg_word_length"])
+                int(row["unique_word_count"]),
+                float(row["avg_word_length"]),
+                float(row["sentiment_score"]),
+                row["emotion_label"]
             )
 
             for _, row in df.iterrows()
@@ -199,8 +231,6 @@ def save_features(df):
         print(
             f"{len(records)} feature records inserted"
         )
-
-        # Mark records as feature engineered
 
         update_query = """
         UPDATE processed_news_articles
@@ -293,4 +323,3 @@ if __name__ == "__main__":
         print(
             f"ERROR: {e}"
         )
-        
