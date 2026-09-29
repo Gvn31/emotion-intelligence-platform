@@ -48,6 +48,18 @@ def load_data_from_db():
             f"Loaded {len(df)} records from DB"
         )
 
+        if df.empty:
+
+            logger.info(
+                "No new records available for preprocessing"
+            )
+
+            print(
+                "No new records available for preprocessing"
+            )
+
+            return pd.DataFrame()
+
         return df
 
     except Exception as e:
@@ -61,12 +73,12 @@ def load_data_from_db():
     finally:
 
         if conn:
+
             conn.close()
 
             logger.info(
                 "DB connection closed"
             )
-
 
 def clean_text(text):
     """
@@ -319,11 +331,14 @@ if __name__ == "__main__":
         )
 
         df = load_data_from_db()
+        if df.empty:
 
-        if len(df) == 0:
+            logger.info(
+                "Skipping preprocessing"
+            )
 
             print(
-                "No unprocessed records found."
+                "Skipping preprocessing."
             )
 
         else:
