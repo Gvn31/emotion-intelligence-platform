@@ -60,3 +60,5 @@ models/*.pkl
 # MLflow
 mlruns/
 
+
+evaluation/,gitkeep
