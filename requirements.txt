@@ -25,12 +25,13 @@ accelerate
 mlflow==2.22.1
 dvc[s3]
 feast==0.40.1
-evidently==0.7.14
+evidently==0.7.140
 
 # Backend
 fastapi
 uvicorn
 requests
+streamlit==1.39.0
 
 # Monitoring
 prometheus-client
