@@ -63,7 +63,8 @@ mlflow.set_tracking_uri(
 print("\nLoading validated model from MLflow...")
 
 model = mlflow.pytorch.load_model(
-    MODEL_URI
+    MODEL_URI,
+    map_location="cpu",
 )
 
 model = model.to(DEVICE)
