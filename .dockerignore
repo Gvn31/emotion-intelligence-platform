@@ -1,0 +1,11 @@
+.git
+.venv
+venv
+.env
+__pycache__
+*.py[cod]
+data
+logs
+mlruns
+.dvc/cache
+models/checkpoints
