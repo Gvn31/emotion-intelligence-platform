@@ -23,6 +23,6 @@ COPY src/ ./src/
 COPY models/emotion_model/ ./models/emotion_model/
 COPY models/label_encoder.pkl ./models/label_encoder.pkl
 
-EXPOSE 8501 8000
+EXPOSE 8051 8000
 
 CMD ["streamlit", "run", "src/app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
