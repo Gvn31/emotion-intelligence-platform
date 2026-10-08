@@ -1,0 +1,54 @@
+name: Emotion Intelligence CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  test:
+    name: Code Quality & Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile Python source
+        run: |
+          python -m compileall -q src
+          python -m compileall -q scripts
+
+      - name: Validate DVC pipeline
+        run: dvc dag
+
+      - name: Check required project files
+        run: |
+          test -f dvc.yaml
+          test -f dvc.lock
+          test -f Dockerfile
+          test -f src/app.py
+          test -f src/predict.py
+          test -f src/train.py
+          test -f src/evaluate.py
+
+      - name: CI completed
+        run: echo "CI checks passed successfully."
