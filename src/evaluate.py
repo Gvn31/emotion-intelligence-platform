@@ -71,19 +71,21 @@ EXPERIMENT_NAME = "emotion_classification"
 
 REGISTERED_MODEL_NAME = "emotion-classifier"
 
+# MLflow S3 artifact bucket
+MLFLOW_S3_BUCKET = os.getenv(
+    "MLFLOW_S3_BUCKET",
+    "emotion-intelligence-mlflow-901099689002-ap-south-1-an",
+)
+
 # Model validation thresholds
 MIN_ACCURACY = 0.80
 MIN_F1 = 0.80
 
 EVALUATION_DIR = "evaluation"
 
-METRICS_PATH = (
-    "evaluation/metrics.json"
-)
+METRICS_PATH = "evaluation/metrics.json"
 
-CONFUSION_MATRIX_PATH = (
-    "evaluation/confusion_matrix.png"
-)
+CONFUSION_MATRIX_PATH = "evaluation/confusion_matrix.png"
 
 
 # ============================================================
@@ -96,7 +98,6 @@ def load_data():
     conn = None
 
     try:
-
         conn = get_connection()
 
         query = """
@@ -124,7 +125,6 @@ def load_data():
         return df
 
     finally:
-
         if conn:
             conn.close()
 
@@ -175,7 +175,6 @@ def prepare_dataset(
     )
 
     def tokenize(batch):
-
         return tokenizer(
             batch["clean_text"],
             truncation=True,
@@ -214,6 +213,10 @@ def register_and_validate_model(
     MLflow run.
 
     Registration happens only when the quality gate passes.
+
+    The registered model version uses the direct S3 artifact
+    location instead of mlflow-artifacts:/ so that clients
+    can download the production model directly from S3.
     """
 
     client = MlflowClient()
@@ -270,24 +273,58 @@ def register_and_validate_model(
         return None
 
     # --------------------------------------------------------
-    # Register exact evaluated model
+    # Register evaluated model using direct S3 artifact source
     # --------------------------------------------------------
-
-    model_uri = (
-        f"runs:/{run_id}/emotion_model"
-    )
 
     print(
         "\nModel passed validation."
     )
 
     print(
-        "Registering evaluated model..."
+        "Registering evaluated model with direct S3 artifact source..."
     )
 
-    registered_model = mlflow.register_model(
-        model_uri=model_uri,
+    # The MLflow experiment stores artifacts using:
+    #
+    # <experiment_id>/<run_id>/artifacts/emotion_model
+    #
+    # Retrieve the experiment ID from the current evaluation run.
+
+    client_run = client.get_run(run_id)
+
+    experiment_id = client_run.info.experiment_id
+
+    # Build the direct S3 location of the model logged
+    # by mlflow.pytorch.log_model(..., "emotion_model").
+
+    s3_model_uri = (
+        f"s3://{MLFLOW_S3_BUCKET}/"
+        f"{experiment_id}/"
+        f"{run_id}/"
+        f"artifacts/emotion_model"
+    )
+
+    print(
+        f"S3 model source: {s3_model_uri}"
+    )
+
+    # Create the registry version directly from S3.
+    #
+    # IMPORTANT:
+    # This avoids registering the model as:
+    #
+    # mlflow-artifacts:/...
+    #
+    # and instead stores:
+    #
+    # s3://...
+    #
+    # as the model source.
+
+    registered_model = client.create_model_version(
         name=REGISTERED_MODEL_NAME,
+        source=s3_model_uri,
+        run_id=run_id,
     )
 
     version = registered_model.version
@@ -499,23 +536,18 @@ def main():
         )
 
         metrics = {
-
             "accuracy": float(
                 accuracy
             ),
-
             "precision": float(
                 precision
             ),
-
             "recall": float(
                 recall
             ),
-
             "f1_score": float(
                 f1
             ),
-
             "roc_auc": float(
                 roc_auc
             ),
@@ -618,47 +650,47 @@ def main():
                 "emotion_model"
             )
 
-        # ----------------------------------------------------
-        # Console Output
-        # ----------------------------------------------------
+            # ----------------------------------------------------
+            # Console Output
+            # ----------------------------------------------------
 
-        print(
-            "\nModel Evaluation Results"
-        )
+            print(
+                "\nModel Evaluation Results"
+            )
 
-        print(
-            "------------------------"
-        )
+            print(
+                "------------------------"
+            )
 
-        print(
-            f"Accuracy : {accuracy:.4f}"
-        )
+            print(
+                f"Accuracy : {accuracy:.4f}"
+            )
 
-        print(
-            f"Precision: {precision:.4f}"
-        )
+            print(
+                f"Precision: {precision:.4f}"
+            )
 
-        print(
-            f"Recall   : {recall:.4f}"
-        )
+            print(
+                f"Recall   : {recall:.4f}"
+            )
 
-        print(
-            f"F1 Score : {f1:.4f}"
-        )
+            print(
+                f"F1 Score : {f1:.4f}"
+            )
 
-        print(
-            f"ROC-AUC  : {roc_auc:.4f}"
-        )
+            print(
+                f"ROC-AUC  : {roc_auc:.4f}"
+            )
 
-        # ----------------------------------------------------
-        # Phase 7 - Model Registry
-        # ----------------------------------------------------
+            # ----------------------------------------------------
+            # Phase 7 - Model Registry
+            # ----------------------------------------------------
 
-        registered_version = register_and_validate_model(
-            run_id=run_id,
-            accuracy=accuracy,
-            f1=f1,
-        )
+            registered_version = register_and_validate_model(
+                run_id=run_id,
+                accuracy=accuracy,
+                f1=f1,
+            )
 
         # ----------------------------------------------------
         # Final Result
@@ -715,5 +747,4 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
-
     main()
