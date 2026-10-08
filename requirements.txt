@@ -25,7 +25,7 @@ accelerate
 mlflow==2.22.1
 dvc[s3]
 feast==0.40.1
-evidently==0.7.140
+
 
 # Backend
 fastapi
