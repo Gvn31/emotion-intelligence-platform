@@ -1,64 +1,86 @@
+
+# Python / Virtual Environment
 venv/
+.venv/
+env/
 
-# VS Code
-.vscode/
-
-#Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-#Notebooks
+
+# VS Code
+.vscode/
+
+
+# Jupyter
 .ipynb_checkpoints/
 
-# Environment variables
-.env
 
-#Data
+# Environment Variables
+.env
+.env.*
+
+
+# Data
+
 data/raw/*.csv
 data/raw/*.json
 
 
-#Logs
+# Logs
 logs/
 *.log
 
-# Models
+
+# Local Databases
+
+*.db
+*.sqlite
+*.sqlite3
+
+# Models / ML Training
+
+models/checkpoints/
+models/emotion_model/
 models/*.pkl
 models/*.joblib
+*.safetensors
 
 # MLflow
 mlruns/
+mlartifacts/
+
 
 # Monitoring Outputs
+
 monitoring/*.json
 monitoring/*.html
 
+
 # Docker
+
 docker-data/
+
 
 # AWS Credentials
 .aws/
 
+
 # Feast
+
 feature_repo/data/
 feature_repo/registry.db
 
-# SQLite
-*.db
-
 # DVC
+
 .dvc/cache/
 .dvc/tmp/
+
+
+# DVC Pipeline Marker Files
+
+pipeline_*.done
+
+# Test / Temporary Files
 src/test.py
-
-# ML / Hugging Face training outputs
-models/checkpoints/
-models/emotion_model/
-models/*.pkl
-
-# MLflow
-mlruns/
-
-
-evaluation/,gitkeep

@@ -1,0 +1,119 @@
+schema: '2.0'
+
+stages:
+
+  preprocessing:
+    cmd: python scripts/run_stage.py src/preprocessing.py pipeline_preprocessing.done
+    deps:
+    - path: scripts/run_stage.py
+      hash: md5
+      md5: fc4459ded11f83977bb0ecc194819d4d
+      size: 832
+    - path: src/db_connection.py
+      hash: md5
+      md5: 37b06d1c73dce7f0043b8f77b29d983a
+      size: 318
+    - path: src/preprocessing.py
+      hash: md5
+      md5: 7a46c32c0f870abd52b7d9b9bcde2c84
+      size: 6469
+    outs:
+    - path: pipeline_preprocessing.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+
+  feature_engineering:
+    cmd: python scripts/run_stage.py src/feature_engineering.py pipeline_feature_engineering.done
+    deps:
+    - path: pipeline_preprocessing.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+    - path: scripts/run_stage.py
+      hash: md5
+      md5: fc4459ded11f83977bb0ecc194819d4d
+      size: 832
+    - path: src/db_connection.py
+      hash: md5
+      md5: 37b06d1c73dce7f0043b8f77b29d983a
+      size: 318
+    - path: src/feature_engineering.py
+      hash: md5
+      md5: 52d282bc005586b3a09d1a36d0451178
+      size: 6143
+    outs:
+    - path: pipeline_feature_engineering.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+
+  emotion_inference:
+    cmd: python scripts/run_stage.py src/emotion_inference.py pipeline_emotion_inference.done
+    deps:
+    - path: pipeline_feature_engineering.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+    - path: scripts/run_stage.py
+      hash: md5
+      md5: fc4459ded11f83977bb0ecc194819d4d
+      size: 832
+    - path: src/db_connection.py
+      hash: md5
+      md5: 37b06d1c73dce7f0043b8f77b29d983a
+      size: 318
+    - path: src/emotion_inference.py
+      hash: md5
+      md5: f98d79dbe00e354cffcb28208b1033df
+      size: 4696
+    outs:
+    - path: pipeline_emotion_inference.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+
+  train:
+    cmd: python scripts/run_stage.py src/train.py pipeline_train.done
+    deps:
+    - path: pipeline_emotion_inference.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+    - path: scripts/run_stage.py
+      hash: md5
+      md5: fc4459ded11f83977bb0ecc194819d4d
+      size: 832
+    - path: src/db_connection.py
+      hash: md5
+      md5: 37b06d1c73dce7f0043b8f77b29d983a
+      size: 318
+    - path: src/train.py
+      hash: md5
+      md5: e75563e7103886bf0861f0c6c05aced4
+      size: 9340
+    outs:
+    - path: pipeline_train.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+
+  evaluate:
+    cmd: python scripts/run_stage.py src/evaluate.py pipeline_evaluate.done
+    deps:
+    - path: pipeline_train.done
+      hash: md5
+      md5: d41d8cd98f00b204e9800998ecf8427e
+      size: 0
+    - path: scripts/run_stage.py
+      hash: md5
+      md5: fc4459ded11f83977bb0ecc194819d4d
+      size: 832
+    - path: src/db_connection.py
+      hash: md5
+      md5: 37b06d1c73dce7f0043b8f77b29d983a
+      size: 318
+    - path: src/evaluate.py
+      hash: md5
+      md5: 089a29083a6c0c11e70094a97cb49936
+      size: 17151
