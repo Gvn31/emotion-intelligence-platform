@@ -25,4 +25,4 @@ COPY models/label_encoder.pkl ./models/label_encoder.pkl
 
 EXPOSE 8051 8000
 
-CMD ["streamlit", "run", "src/app.py", "--server.address=0.0.0.0", "--server.port=8501", "--server.headless=true"]
+CMD ["streamlit", "run", "src/app.py", "--server.address=0.0.0.0", "--server.port=8051", "--server.headless=true"]
