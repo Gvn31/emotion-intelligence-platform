@@ -1,3 +1,4 @@
+
 name: Emotion Intelligence CI-CD
 
 on:
@@ -56,7 +57,7 @@ jobs:
         run: echo "CI checks passed successfully."
 
   deploy:
-    name: Build, Push & Deploy to AWS
+    name: Build & Push Docker Image to ECR
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -68,10 +69,6 @@ jobs:
     env:
       AWS_REGION: ap-south-1
       ECR_REPOSITORY: emotion-intelligence
-      ECS_CLUSTER: emotion-intelligence-cluster
-      ECS_SERVICE: emotion-intelligence-dashboard-service-
-      ECS_TASK_DEFINITION: emotion-intelligence-dashboard
-      CONTAINER_NAME: emotion-dashboard
 
     steps:
       - name: Checkout repository
@@ -90,6 +87,7 @@ jobs:
             s3://emotion-intelligence-mlflow-901099689002-ap-south-1-an/docker-model/emotion_model/ \
             models/emotion_model/ \
             --recursive
+
           test -s models/emotion_model/config.json
           test -s models/emotion_model/model.safetensors
           test -s models/emotion_model/tokenizer.json
@@ -109,26 +107,7 @@ jobs:
           docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           echo "image=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Download current ECS task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition "$ECS_TASK_DEFINITION" \
-            --query taskDefinition \
-            --output json > task-definition.json
+      - name: CI-CD image build completed
+        run: echo "CI passed and Docker image pushed to ECR. ECS was not updated."
 
-      - name: Render task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Deploy to Amazon ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
 
