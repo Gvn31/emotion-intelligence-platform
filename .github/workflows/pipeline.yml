@@ -10,7 +10,11 @@ on:
       - main
       - develop
   schedule:
+<<<<<<< HEAD
     # Runs daily at 6:00 AM India time (00:30 UTC)
+=======
+    # Daily at 6:00 AM India time (00:30 UTC)
+>>>>>>> d6586505cdd6fb84eb5d7396046c15dd6ec8320b
     - cron: "30 0 * * *"
   workflow_dispatch:
 
@@ -61,7 +65,7 @@ jobs:
         run: echo "CI checks passed successfully."
 
   deploy:
-    name: Build & Push Docker Image to ECR
+    name: Build & Push Dashboard Image to ECR
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -101,7 +105,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
+      - name: Build and push dashboard image
         id: build-image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -112,7 +116,80 @@ jobs:
           echo "image=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: CI-CD image build completed
-        run: echo "CI passed and Docker image pushed to ECR. ECS was not updated."
+        run: echo "Dashboard image pushed to ECR. ECS was not updated."
+
+  retrain:
+    name: Daily Drift Check and Conditional Retraining
+    needs: test
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_REGION: ap-south-1
+      ECS_CLUSTER: emotion-intelligence-cluster
+      ECS_TASK_DEFINITION: emotion-intelligence-retraining
+      SUBNET_ID: ${{ vars.RETRAINING_SUBNET_ID }}
+      SECURITY_GROUP_ID: ${{ vars.RETRAINING_SECURITY_GROUP_ID }}
+
+    steps:
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start retraining task
+        id: run-task
+        shell: bash
+        run: |
+          if [[ -z "$SUBNET_ID" || -z "$SECURITY_GROUP_ID" ]]; then
+            echo "Set RETRAINING_SUBNET_ID and RETRAINING_SECURITY_GROUP_ID in GitHub Actions variables."
+            exit 1
+          fi
+
+          RESULT=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_ID],securityGroups=[$SECURITY_GROUP_ID],assignPublicIp=DISABLED}" \
+            --region "$AWS_REGION")
+
+          echo "$RESULT"
+
+          TASK_ARN=$(echo "$RESULT" | jq -r '.tasks[0].taskArn // empty')
+          if [[ -z "$TASK_ARN" ]]; then
+            echo "ECS did not start the retraining task."
+            exit 1
+          fi
+
+          echo "task_arn=$TASK_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for retraining task to finish
+        run: |
+          aws ecs wait tasks-stopped \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "${{ steps.run-task.outputs.task_arn }}" \
+            --region "$AWS_REGION"
+
+      - name: Check retraining task result
+        run: |
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "${{ steps.run-task.outputs.task_arn }}" \
+            --region "$AWS_REGION" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)
+
+          echo "Retraining task exit code: $EXIT_CODE"
+
+          if [[ "$EXIT_CODE" != "0" ]]; then
+            echo "Retraining task failed. Check its ECS task logs in CloudWatch."
+            exit 1
+          fi
 
   retrain:
     name: Daily Drift Check and Conditional Retraining
