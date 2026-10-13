@@ -1,8 +1,8 @@
 stages:
-
   preprocessing:
     cmd: python scripts/run_stage.py src/preprocessing.py pipeline_preprocessing.done
     deps:
+      - data/raw/news_raw.csv
       - scripts/run_stage.py
       - src/preprocessing.py
       - src/db_connection.py
@@ -12,6 +12,7 @@ stages:
   feature_engineering:
     cmd: python scripts/run_stage.py src/feature_engineering.py pipeline_feature_engineering.done
     deps:
+      - data/raw/news_raw.csv
       - scripts/run_stage.py
       - src/feature_engineering.py
       - src/db_connection.py
@@ -22,6 +23,7 @@ stages:
   emotion_inference:
     cmd: python scripts/run_stage.py src/emotion_inference.py pipeline_emotion_inference.done
     deps:
+      - data/raw/news_raw.csv
       - scripts/run_stage.py
       - src/emotion_inference.py
       - src/db_connection.py
@@ -32,6 +34,7 @@ stages:
   train:
     cmd: python scripts/run_stage.py src/train.py pipeline_train.done
     deps:
+      - data/raw/news_raw.csv
       - scripts/run_stage.py
       - src/train.py
       - src/db_connection.py
@@ -42,7 +45,10 @@ stages:
   evaluate:
     cmd: python scripts/run_stage.py src/evaluate.py pipeline_evaluate.done
     deps:
+      - data/raw/news_raw.csv
       - scripts/run_stage.py
       - src/evaluate.py
       - src/db_connection.py
       - pipeline_train.done
+    outs:
+      - pipeline_evaluate.done

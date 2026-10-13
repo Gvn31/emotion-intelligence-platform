@@ -3,8 +3,13 @@ schema: '2.0'
 stages:
 
   preprocessing:
-    cmd: python scripts/run_stage.py src/preprocessing.py pipeline_preprocessing.done
+    cmd: python scripts/run_stage.py src/preprocessing.py 
+      pipeline_preprocessing.done
     deps:
+    - path: data/raw/news_raw.csv
+      hash: md5
+      md5: 666305815150a161a20ac4860ef1f353
+      size: 817200
     - path: scripts/run_stage.py
       hash: md5
       md5: fc4459ded11f83977bb0ecc194819d4d
@@ -22,10 +27,14 @@ stages:
       hash: md5
       md5: d41d8cd98f00b204e9800998ecf8427e
       size: 0
-
   feature_engineering:
-    cmd: python scripts/run_stage.py src/feature_engineering.py pipeline_feature_engineering.done
+    cmd: python scripts/run_stage.py src/feature_engineering.py 
+      pipeline_feature_engineering.done
     deps:
+    - path: data/raw/news_raw.csv
+      hash: md5
+      md5: 666305815150a161a20ac4860ef1f353
+      size: 817200
     - path: pipeline_preprocessing.done
       hash: md5
       md5: d41d8cd98f00b204e9800998ecf8427e
@@ -47,10 +56,14 @@ stages:
       hash: md5
       md5: d41d8cd98f00b204e9800998ecf8427e
       size: 0
-
   emotion_inference:
-    cmd: python scripts/run_stage.py src/emotion_inference.py pipeline_emotion_inference.done
+    cmd: python scripts/run_stage.py src/emotion_inference.py 
+      pipeline_emotion_inference.done
     deps:
+    - path: data/raw/news_raw.csv
+      hash: md5
+      md5: 666305815150a161a20ac4860ef1f353
+      size: 817200
     - path: pipeline_feature_engineering.done
       hash: md5
       md5: d41d8cd98f00b204e9800998ecf8427e
@@ -72,7 +85,6 @@ stages:
       hash: md5
       md5: d41d8cd98f00b204e9800998ecf8427e
       size: 0
-
   train:
     cmd: python scripts/run_stage.py src/train.py pipeline_train.done
     deps:
