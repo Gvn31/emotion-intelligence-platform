@@ -96,3 +96,5 @@ src/test.py
 
 # DVC stage completion markers
 /pipeline_*.done
+
+build/
