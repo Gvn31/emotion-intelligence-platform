@@ -85,3 +85,14 @@ pipeline_*.done
 
 # Test / Temporary Files
 src/test.py
+
+# Candidate model and training checkpoints
+/models/candidate_emotion_model/
+/models/candidate_checkpoints/
+/models/candidate_label_encoder.pkl
+
+# Generated monitoring reports
+/monitoring/reports/
+
+# DVC stage completion markers
+/pipeline_*.done
