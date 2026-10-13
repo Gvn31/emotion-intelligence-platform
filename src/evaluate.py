@@ -1,41 +1,29 @@
 """
-Model Evaluation Module
+Model Evaluation Module — Emotion Intelligence Platform
 
-Evaluates the fine-tuned emotion classification model
-using the same stratified test split used during training.
+Evaluates a candidate emotion model, generates metrics and a confusion
+matrix, logs the evaluation to MLflow, and registers the candidate only
+when both accuracy and weighted F1 meet the required thresholds.
 
-Metrics:
-- Accuracy
-- Precision
-- Recall
-- Weighted F1
-- ROC-AUC
-- Confusion Matrix
-
-Results:
-- evaluation/metrics.json
-- evaluation/confusion_matrix.png
-- MLflow evaluation run
-- Model Registry registration after validation
-- @validated alias for validated models
+Does not overwrite or deploy the production model.
 """
 
 import json
 import os
+from pathlib import Path
 
+import joblib
 import mlflow
 import mlflow.pytorch
-from mlflow import MlflowClient
-
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import torch
 
 from datasets import Dataset
-
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-
+from mlflow import MlflowClient
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -45,7 +33,7 @@ from sklearn.metrics import (
     confusion_matrix,
     ConfusionMatrixDisplay,
 )
-
+from sklearn.model_selection import train_test_split
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
@@ -56,91 +44,101 @@ from db_connection import get_connection
 from logger import logger
 
 
-# ============================================================
-# Configuration
-# ============================================================
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-MODEL_PATH = "models/emotion_model"
+CANDIDATE_MODEL_PATH = PROJECT_ROOT / "models" / "candidate_emotion_model"
+CANDIDATE_ENCODER_PATH = PROJECT_ROOT / "models" / "candidate_label_encoder.pkl"
 
 MLFLOW_TRACKING_URI = os.getenv(
     "MLFLOW_TRACKING_URI",
     "http://15.252.15.183:5000",
 )
 
-EXPERIMENT_NAME = "emotion_classification"
-
-REGISTERED_MODEL_NAME = "emotion-classifier"
-
-# MLflow S3 artifact bucket
 MLFLOW_S3_BUCKET = os.getenv(
     "MLFLOW_S3_BUCKET",
     "emotion-intelligence-mlflow-901099689002-ap-south-1-an",
 )
 
-# Model validation thresholds
+EXPERIMENT_NAME = "emotion_classification"
+REGISTERED_MODEL_NAME = "emotion-classifier"
+
 MIN_ACCURACY = 0.80
 MIN_F1 = 0.80
 
-EVALUATION_DIR = "evaluation"
+EVALUATION_DIR = PROJECT_ROOT / "evaluation"
+METRICS_PATH = EVALUATION_DIR / "metrics.json"
+CONFUSION_MATRIX_PATH = EVALUATION_DIR / "confusion_matrix.png"
 
-METRICS_PATH = "evaluation/metrics.json"
-
-CONFUSION_MATRIX_PATH = "evaluation/confusion_matrix.png"
-
-
-# ============================================================
-# Load Evaluation Data
-# ============================================================
 
 def load_data():
-    """Load labeled data from the feature store."""
-
-    conn = None
+    """Load labeled records from PostgreSQL."""
+    connection = None
 
     try:
-        conn = get_connection()
+        connection = get_connection()
 
         query = """
-        SELECT
-            clean_text,
-            emotion_label
-        FROM feature_store
-        WHERE emotion_label IS NOT NULL
-        AND emotion_label != 'disgust';
+            SELECT clean_text, emotion_label
+            FROM feature_store
+            WHERE clean_text IS NOT NULL
+              AND TRIM(clean_text) <> ''
+              AND emotion_label IS NOT NULL
+              AND TRIM(emotion_label) <> ''
+              AND emotion_label <> 'disgust';
         """
 
-        df = pd.read_sql(
-            query,
-            conn
-        )
+        df = pd.read_sql_query(query, connection)
+        df["clean_text"] = df["clean_text"].astype(str).str.strip()
+        df["emotion_label"] = df["emotion_label"].astype(str).str.strip()
 
-        logger.info(
-            f"Loaded {len(df)} records for evaluation"
-        )
+        df = df[
+            (df["clean_text"] != "")
+            & (df["emotion_label"] != "")
+        ].drop_duplicates(
+            subset=["clean_text", "emotion_label"]
+        ).reset_index(drop=True)
 
-        print(
-            f"Loaded {len(df)} evaluation records"
-        )
+        if df.empty:
+            raise ValueError("No valid evaluation records were found.")
+
+        logger.info("Loaded %d evaluation records", len(df))
+        print(f"Loaded {len(df)} evaluation records")
 
         return df
 
     finally:
-        if conn:
-            conn.close()
+        if connection is not None:
+            connection.close()
 
 
-# ============================================================
-# Prepare Test Dataset
-# ============================================================
+def prepare_test_dataset(df, label_encoder):
+    """Recreate the deterministic stratified split used during training."""
+    df = df.copy()
 
-def prepare_test_dataset(df):
-    """Create the stratified test split."""
+    known_labels = set(label_encoder.classes_)
+    observed_labels = set(df["emotion_label"].unique())
 
-    label_encoder = LabelEncoder()
+    unknown_labels = observed_labels - known_labels
+    if unknown_labels:
+        raise ValueError(
+            "Evaluation data contains labels unknown to the candidate "
+            f"encoder: {sorted(unknown_labels)}"
+        )
 
-    df["label"] = label_encoder.fit_transform(
-        df["emotion_label"]
-    )
+    df["label"] = label_encoder.transform(df["emotion_label"])
+    class_counts = df["label"].value_counts()
+
+    if len(class_counts) != len(label_encoder.classes_):
+        raise ValueError(
+            "Evaluation data does not contain every candidate emotion class. "
+            "Use a consistent evaluation dataset before registering the model."
+        )
+
+    if class_counts.min() < 2:
+        raise ValueError(
+            "Each emotion class needs at least two records for "
+            "stratified evaluation."
+        )
 
     _, test_df = train_test_split(
         df,
@@ -149,29 +147,15 @@ def prepare_test_dataset(df):
         stratify=df["label"],
     )
 
-    print(
-        f"Test records: {len(test_df)}"
-    )
-
-    return (
-        test_df,
-        label_encoder
-    )
+    print(f"Test records: {len(test_df)}")
+    return test_df.reset_index(drop=True)
 
 
-# ============================================================
-# Prepare Hugging Face Dataset
-# ============================================================
-
-def prepare_dataset(
-    test_df,
-    tokenizer
-):
-    """Tokenize the evaluation dataset."""
-
+def tokenize_test_data(test_df, tokenizer):
+    """Tokenize test records for Transformers."""
     dataset = Dataset.from_pandas(
-        test_df,
-        preserve_index=False
+        test_df[["clean_text", "label"]],
+        preserve_index=False,
     )
 
     def tokenize(batch):
@@ -182,197 +166,107 @@ def prepare_dataset(
             max_length=128,
         )
 
-    dataset = dataset.map(
-        tokenize,
-        batched=True
-    )
-
+    dataset = dataset.map(tokenize, batched=True)
     dataset.set_format(
         type="torch",
-        columns=[
-            "input_ids",
-            "attention_mask",
-            "label",
-        ],
+        columns=["input_ids", "attention_mask", "label"],
     )
 
     return dataset
 
 
-# ============================================================
-# Register and Validate Model
-# ============================================================
+def calculate_metrics(y_true, y_pred, probabilities):
+    """Calculate classification metrics."""
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "precision": float(
+            precision_score(
+                y_true, y_pred, average="weighted", zero_division=0
+            )
+        ),
+        "recall": float(
+            recall_score(
+                y_true, y_pred, average="weighted", zero_division=0
+            )
+        ),
+        "f1_score": float(
+            f1_score(
+                y_true, y_pred, average="weighted", zero_division=0
+            )
+        ),
+    }
 
-def register_and_validate_model(
-    run_id,
-    accuracy,
-    f1,
-):
-    """
-    Register the exact model evaluated in the current
-    MLflow run.
-
-    Registration happens only when the quality gate passes.
-
-    The registered model version uses the direct S3 artifact
-    location instead of mlflow-artifacts:/ so that clients
-    can download the production model directly from S3.
-    """
-
-    client = MlflowClient()
-
-    # --------------------------------------------------------
-    # Quality Gate
-    # --------------------------------------------------------
-
-    validation_passed = (
-        accuracy >= MIN_ACCURACY
-        and
-        f1 >= MIN_F1
-    )
-
-    print(
-        "\nModel Quality Gate"
-    )
-
-    print(
-        "------------------"
-    )
-
-    print(
-        f"Accuracy : {accuracy:.4f}"
-    )
-
-    print(
-        f"Required : {MIN_ACCURACY:.4f}"
-    )
-
-    print(
-        f"F1 Score : {f1:.4f}"
-    )
-
-    print(
-        f"Required : {MIN_F1:.4f}"
-    )
-
-    # --------------------------------------------------------
-    # If validation fails
-    # --------------------------------------------------------
-
-    if not validation_passed:
-
-        print(
-            "\nModel FAILED validation."
+    try:
+        metrics["roc_auc"] = float(
+            roc_auc_score(
+                y_true,
+                probabilities,
+                labels=np.arange(probabilities.shape[1]),
+                multi_class="ovr",
+                average="weighted",
+            )
         )
+    except ValueError as exc:
+        metrics["roc_auc"] = None
+        logger.warning("ROC-AUC could not be calculated: %s", exc)
 
+    return metrics
+
+
+def register_validated_model(run_id, metrics):
+    """Register the exact candidate artifact only if quality gates pass."""
+    accuracy = metrics["accuracy"]
+    weighted_f1 = metrics["f1_score"]
+
+    passed = accuracy >= MIN_ACCURACY and weighted_f1 >= MIN_F1
+
+    print("\nModel Quality Gate")
+    print("------------------")
+    print(f"Accuracy: {accuracy:.4f} (required: {MIN_ACCURACY:.2f})")
+    print(f"Weighted F1: {weighted_f1:.4f} (required: {MIN_F1:.2f})")
+
+    if not passed:
         logger.warning(
-            "Model failed validation. "
-            "Model will not be registered."
+            "Candidate failed quality gates; it will not be registered."
         )
-
+        print("Candidate FAILED validation. Production model unchanged.")
         return None
 
-    # --------------------------------------------------------
-    # Register evaluated model using direct S3 artifact source
-    # --------------------------------------------------------
+    client = MlflowClient()
+    run = client.get_run(run_id)
+    experiment_id = run.info.experiment_id
 
-    print(
-        "\nModel passed validation."
-    )
-
-    print(
-        "Registering evaluated model with direct S3 artifact source..."
-    )
-
-    # The MLflow experiment stores artifacts using:
-    #
-    # <experiment_id>/<run_id>/artifacts/emotion_model
-    #
-    # Retrieve the experiment ID from the current evaluation run.
-
-    client_run = client.get_run(run_id)
-
-    experiment_id = client_run.info.experiment_id
-
-    # Build the direct S3 location of the model logged
-    # by mlflow.pytorch.log_model(..., "emotion_model").
-
-    s3_model_uri = (
+    model_source = (
         f"s3://{MLFLOW_S3_BUCKET}/"
-        f"{experiment_id}/"
-        f"{run_id}/"
-        f"artifacts/emotion_model"
+        f"{experiment_id}/{run_id}/artifacts/emotion_model"
     )
 
-    print(
-        f"S3 model source: {s3_model_uri}"
-    )
+    # Ensure the registered model exists.
+    try:
+        client.get_registered_model(REGISTERED_MODEL_NAME)
+    except Exception:
+        client.create_registered_model(REGISTERED_MODEL_NAME)
 
-    # Create the registry version directly from S3.
-    #
-    # IMPORTANT:
-    # This avoids registering the model as:
-    #
-    # mlflow-artifacts:/...
-    #
-    # and instead stores:
-    #
-    # s3://...
-    #
-    # as the model source.
-
-    registered_model = client.create_model_version(
+    version_info = client.create_model_version(
         name=REGISTERED_MODEL_NAME,
-        source=s3_model_uri,
+        source=model_source,
         run_id=run_id,
     )
 
-    version = registered_model.version
+    version = version_info.version
 
-    print(
-        f"Registered model: "
-        f"{REGISTERED_MODEL_NAME}"
-    )
-
-    print(
-        f"Version: {version}"
-    )
-
-    # --------------------------------------------------------
-    # Add evaluation metadata
-    # --------------------------------------------------------
-
-    client.set_model_version_tag(
-        REGISTERED_MODEL_NAME,
-        version,
-        "validation_status",
-        "passed",
-    )
-
-    client.set_model_version_tag(
-        REGISTERED_MODEL_NAME,
-        version,
-        "evaluation_accuracy",
-        f"{accuracy:.4f}",
-    )
-
-    client.set_model_version_tag(
-        REGISTERED_MODEL_NAME,
-        version,
-        "evaluation_f1",
-        f"{f1:.4f}",
-    )
-
-    client.set_model_version_tag(
-        REGISTERED_MODEL_NAME,
-        version,
-        "evaluation_run_id",
-        run_id,
-    )
-
-    # --------------------------------------------------------
-    # Assign validated alias
-    # --------------------------------------------------------
+    for key, value in {
+        "validation_status": "passed",
+        "evaluation_accuracy": f"{accuracy:.6f}",
+        "evaluation_f1": f"{weighted_f1:.6f}",
+        "evaluation_run_id": run_id,
+    }.items():
+        client.set_model_version_tag(
+            REGISTERED_MODEL_NAME,
+            version,
+            key,
+            value,
+        )
 
     client.set_registered_model_alias(
         REGISTERED_MODEL_NAME,
@@ -380,371 +274,159 @@ def register_and_validate_model(
         version,
     )
 
-    print(
-        f"Alias '@validated' assigned "
-        f"to version {version}."
+    logger.info(
+        "Validated model registered: %s version %s",
+        REGISTERED_MODEL_NAME,
+        version,
     )
 
-    logger.info(
-        f"Model {REGISTERED_MODEL_NAME} "
-        f"version {version} registered successfully"
-    )
-
-    logger.info(
-        f"Model version {version} "
-        f"received @validated alias"
-    )
+    print(f"Registered model: {REGISTERED_MODEL_NAME}")
+    print(f"Version: {version}")
+    print("Alias: @validated")
 
     return version
 
 
-# ============================================================
-# Main Evaluation Pipeline
-# ============================================================
-
 def main():
+    logger.info("Candidate model evaluation started")
 
-    try:
-
-        logger.info(
-            "Model evaluation started"
+    if not CANDIDATE_MODEL_PATH.is_dir():
+        raise FileNotFoundError(
+            f"Candidate model not found: {CANDIDATE_MODEL_PATH}. "
+            "Run src/train.py first."
         )
 
-        # ----------------------------------------------------
-        # Create evaluation directory
-        # ----------------------------------------------------
-
-        os.makedirs(
-            EVALUATION_DIR,
-            exist_ok=True
+    if not CANDIDATE_ENCODER_PATH.is_file():
+        raise FileNotFoundError(
+            f"Candidate label encoder not found: {CANDIDATE_ENCODER_PATH}"
         )
 
-        # ----------------------------------------------------
-        # MLflow configuration
-        # ----------------------------------------------------
+    EVALUATION_DIR.mkdir(parents=True, exist_ok=True)
 
-        mlflow.set_tracking_uri(
-            MLFLOW_TRACKING_URI
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(EXPERIMENT_NAME)
+
+    df = load_data()
+    label_encoder = joblib.load(CANDIDATE_ENCODER_PATH)
+
+    if not hasattr(label_encoder, "classes_"):
+        raise ValueError("Candidate label encoder is invalid.")
+
+    test_df = prepare_test_dataset(df, label_encoder)
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(CANDIDATE_MODEL_PATH)
+    )
+    model = AutoModelForSequenceClassification.from_pretrained(
+        str(CANDIDATE_MODEL_PATH)
+    )
+
+    if model.config.num_labels != len(label_encoder.classes_):
+        raise ValueError(
+            "Candidate model output count does not match the label encoder."
         )
 
-        mlflow.set_experiment(
-            EXPERIMENT_NAME
+    expected_mapping = {
+        index: label
+        for index, label in enumerate(label_encoder.classes_)
+    }
+
+    if model.config.id2label and model.config.id2label != expected_mapping:
+        logger.warning(
+            "Model label names differ from the encoder mapping; "
+            "the saved encoder defines the evaluation class order."
         )
 
-        # ----------------------------------------------------
-        # Load data
-        # ----------------------------------------------------
-
-        df = load_data()
-
-        # ----------------------------------------------------
-        # Prepare test dataset
-        # ----------------------------------------------------
-
-        (
-            test_df,
-            label_encoder
-        ) = prepare_test_dataset(
-            df
-        )
-
-        # ----------------------------------------------------
-        # Load trained model
-        # ----------------------------------------------------
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            MODEL_PATH
-        )
-
-        model = AutoModelForSequenceClassification.from_pretrained(
-            MODEL_PATH
-        )
-
-        # ----------------------------------------------------
-        # Prepare test dataset
-        # ----------------------------------------------------
-
-        test_dataset = prepare_dataset(
-            test_df,
-            tokenizer
-        )
-
-        # ----------------------------------------------------
-        # Trainer
-        # ----------------------------------------------------
-
-        trainer = Trainer(
-            model=model
-        )
-
-        # ----------------------------------------------------
-        # Predictions
-        # ----------------------------------------------------
-
-        predictions = trainer.predict(
-            test_dataset
-        )
-
-        logits = predictions.predictions
-
-        y_true = predictions.label_ids
-
-        probabilities = torch.softmax(
-            torch.tensor(logits),
-            dim=1
-        ).numpy()
-
-        y_pred = probabilities.argmax(
-            axis=1
-        )
-
-        # ----------------------------------------------------
-        # Metrics
-        # ----------------------------------------------------
-
-        accuracy = accuracy_score(
-            y_true,
-            y_pred
-        )
-
-        precision = precision_score(
-            y_true,
-            y_pred,
-            average="weighted",
-            zero_division=0
-        )
-
-        recall = recall_score(
-            y_true,
-            y_pred,
-            average="weighted",
-            zero_division=0
-        )
-
-        f1 = f1_score(
-            y_true,
-            y_pred,
-            average="weighted",
-            zero_division=0
-        )
-
-        roc_auc = roc_auc_score(
-            y_true,
-            probabilities,
-            multi_class="ovr",
-            average="weighted"
-        )
-
-        metrics = {
-            "accuracy": float(
-                accuracy
-            ),
-            "precision": float(
-                precision
-            ),
-            "recall": float(
-                recall
-            ),
-            "f1_score": float(
-                f1
-            ),
-            "roc_auc": float(
-                roc_auc
-            ),
-        }
-
-        # ----------------------------------------------------
-        # Save metrics
-        # ----------------------------------------------------
-
-        with open(
-            METRICS_PATH,
-            "w"
-        ) as f:
-
-            json.dump(
-                metrics,
-                f,
-                indent=4
-            )
-
-        # ----------------------------------------------------
-        # Confusion Matrix
-        # ----------------------------------------------------
-
-        cm = confusion_matrix(
-            y_true,
-            y_pred
-        )
-
-        labels = label_encoder.classes_
-
-        fig, ax = plt.subplots(
-            figsize=(8, 8)
-        )
-
-        ConfusionMatrixDisplay(
-            confusion_matrix=cm,
-            display_labels=labels,
-        ).plot(
-            ax=ax,
-            xticks_rotation=45,
-        )
-
-        plt.title(
-            "Emotion Classification Confusion Matrix"
-        )
-
-        plt.tight_layout()
-
-        plt.savefig(
-            CONFUSION_MATRIX_PATH,
-            dpi=300
-        )
-
-        plt.close()
-
-        # ----------------------------------------------------
-        # MLflow Evaluation Run
-        # ----------------------------------------------------
-
-        with mlflow.start_run(
-            run_name="model_evaluation"
-        ) as run:
-
-            run_id = run.info.run_id
-
-            mlflow.set_tag(
-                "phase",
-                "model_evaluation"
-            )
-
-            mlflow.set_tag(
-                "model_path",
-                MODEL_PATH
-            )
-
-            mlflow.set_tag(
-                "registered_model",
-                REGISTERED_MODEL_NAME
-            )
-
-            mlflow.log_metrics(
-                metrics
-            )
-
-            mlflow.log_artifact(
-                METRICS_PATH
-            )
-
-            mlflow.log_artifact(
-                CONFUSION_MATRIX_PATH
-            )
-
-            # ------------------------------------------------
-            # Log the exact model being evaluated
-            # ------------------------------------------------
-
-            mlflow.pytorch.log_model(
-                model,
-                "emotion_model"
-            )
-
-            # ----------------------------------------------------
-            # Console Output
-            # ----------------------------------------------------
-
-            print(
-                "\nModel Evaluation Results"
-            )
-
-            print(
-                "------------------------"
-            )
-
-            print(
-                f"Accuracy : {accuracy:.4f}"
-            )
-
-            print(
-                f"Precision: {precision:.4f}"
-            )
-
-            print(
-                f"Recall   : {recall:.4f}"
-            )
-
-            print(
-                f"F1 Score : {f1:.4f}"
-            )
-
-            print(
-                f"ROC-AUC  : {roc_auc:.4f}"
-            )
-
-            # ----------------------------------------------------
-            # Phase 7 - Model Registry
-            # ----------------------------------------------------
-
-            registered_version = register_and_validate_model(
-                run_id=run_id,
-                accuracy=accuracy,
-                f1=f1,
-            )
-
-        # ----------------------------------------------------
-        # Final Result
-        # ----------------------------------------------------
-
-        if registered_version:
-
-            print(
-                "\nModel Registry update successful."
-            )
-
-            print(
-                f"Model    : {REGISTERED_MODEL_NAME}"
-            )
-
-            print(
-                f"Version  : {registered_version}"
-            )
-
-            print(
-                "Alias    : @validated"
-            )
-
-        else:
-
-            print(
-                "\nModel was not registered "
-                "because validation failed."
-            )
-
-        print(
-            "\nEvaluation completed successfully."
-        )
-
-        logger.info(
-            "Model evaluation completed successfully"
-        )
-
-    except Exception as e:
-
-        logger.error(
-            f"Model evaluation failed: {e}"
-        )
-
-        print(
-            f"ERROR: {e}"
-        )
-
-        raise
-
-
-# ============================================================
-# Entry Point
-# ============================================================
+    test_dataset = tokenize_test_data(test_df, tokenizer)
+
+    trainer = Trainer(model=model)
+    prediction_output = trainer.predict(test_dataset)
+
+    logits = prediction_output.predictions
+    y_true = prediction_output.label_ids
+    probabilities = torch.softmax(
+        torch.tensor(logits, dtype=torch.float32), dim=1
+    ).cpu().numpy()
+    y_pred = probabilities.argmax(axis=1)
+
+    metrics = calculate_metrics(y_true, y_pred, probabilities)
+    metrics["evaluated_records"] = int(len(y_true))
+    metrics["min_accuracy"] = MIN_ACCURACY
+    metrics["min_weighted_f1"] = MIN_F1
+
+    quality_passed = (
+        metrics["accuracy"] >= MIN_ACCURACY
+        and metrics["f1_score"] >= MIN_F1
+    )
+    metrics["quality_gate_passed"] = bool(quality_passed)
+
+    with METRICS_PATH.open("w", encoding="utf-8") as file:
+        json.dump(metrics, file, indent=4, allow_nan=False)
+
+    matrix = confusion_matrix(
+        y_true,
+        y_pred,
+        labels=np.arange(len(label_encoder.classes_)),
+    )
+
+    fig, ax = plt.subplots(figsize=(9, 9))
+    ConfusionMatrixDisplay(
+        confusion_matrix=matrix,
+        display_labels=label_encoder.classes_,
+    ).plot(ax=ax, xticks_rotation=45, colorbar=False)
+    ax.set_title("Emotion Classification Confusion Matrix")
+    fig.tight_layout()
+    fig.savefig(CONFUSION_MATRIX_PATH, dpi=200)
+    plt.close(fig)
+
+    registered_version = None
+
+    with mlflow.start_run(run_name="candidate_model_evaluation") as run:
+        run_id = run.info.run_id
+
+        mlflow.set_tags({
+            "phase": "candidate_model_evaluation",
+            "model_path": str(CANDIDATE_MODEL_PATH),
+            "registered_model": REGISTERED_MODEL_NAME,
+            "quality_gate_passed": str(quality_passed).lower(),
+        })
+
+        mlflow.log_metrics({
+            key: value
+            for key, value in metrics.items()
+            if isinstance(value, (int, float))
+            and value is not None
+            and key not in {
+                "evaluated_records",
+                "min_accuracy",
+                "min_weighted_f1",
+            }
+        })
+
+        mlflow.log_artifact(str(METRICS_PATH))
+        mlflow.log_artifact(str(CONFUSION_MATRIX_PATH))
+        mlflow.pytorch.log_model(model, "emotion_model")
+
+        registered_version = register_validated_model(run_id, metrics)
+
+    print("\nCandidate Evaluation Results")
+    print("----------------------------")
+    print(json.dumps(metrics, indent=2))
+    print(f"\nMetrics: {METRICS_PATH}")
+    print(f"Confusion matrix: {CONFUSION_MATRIX_PATH}")
+
+    if registered_version is None:
+        print("\nCandidate was not registered. Production model unchanged.")
+    else:
+        print(f"\nValidated registry version: {registered_version}")
+        print("No ECS deployment was performed.")
+
+    logger.info("Candidate evaluation completed")
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        logger.exception("Candidate model evaluation failed")
+        raise
